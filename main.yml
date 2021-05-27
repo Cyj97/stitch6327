@@ -1,0 +1,83 @@
+name: 同步大佬代码并触发部署
+on:
+  schedule:
+    - cron: '5 0,15 * * *'
+  workflow_dispatch:
+
+jobs:
+  repo-sync:
+    runs-on: ubuntu-latest
+    env:
+      PAT: ${{ secrets.PAT }}
+      DEPLOY_PUSH_KEY: ${{ secrets.DEPLOY_PUSH_KEY }}
+      DEPLOY_TG_USER_ID: ${{ secrets.DEPLOY_TG_USER_ID }}
+      DEPLOY_TG_BOT_TOKEN: ${{ secrets.DEPLOY_TG_BOT_TOKEN }}
+      editIndexJsFile: ${{ secrets.editIndexJsFile }}
+    steps:
+      - uses: actions/checkout@v2
+     
+      - name: sync lxk0301-scripts
+        uses: repo-sync/github-sync@v2
+        if: env.PAT
+        with:
+          source_repo: "https://github.com/lxk0301/jd_scripts.git"
+          source_branch: "master"
+          destination_branch: "master"
+          github_token: ${{ env.PAT }}
+      
+      - uses: actions/checkout@v2
+        with:
+          repository: ${{ github.repository }}
+          ref: master
+      
+      - name: 修改index.js文件信息
+        if: env.editIndexJsFile == 'true'
+        run: |
+          echo "sha=`git hash-object index.js`" >> $GITHUB_ENV
+          sed -i \
+          -e 's#//delete#delete#' \
+          -e 's#//require(#require(#' \
+          -e 's#      var request#//      var request#' \
+          -e 's#      request(#//      request(#' \
+          -e 's#        eval(#//        eval(#' \
+          -e 's#      })#//      })#' \
+          index.js
+
+      - name: 提交index.js文件
+        if: env.editIndexJsFile == 'true'
+        run: |
+          base64Str=`cat index.js | base64 -w 0`
+          curl \
+            -s -o /dev/null \
+            -X PUT \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: token ${{ env.PAT }}" \
+            -d '{"branch":"master","message":"修改index.js","content":"'$base64Str'","sha":"'$sha'"}' \
+            https://api.github.com/repos/${{ github.repository }}/contents/index.js
+      
+      - name: 触发部署到腾讯云函数
+        if: env.PAT && github.event_name == 'schedule'  #只有定时任务才触发部署
+        run: |
+          curl \
+            -X POST \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: token ${{ env.PAT }}" \
+            -d '{"ref":"master"}' \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/deploy_tencent_scf.yml/dispatches
+
+      - name: Notify To Telegram
+        if: env.DEPLOY_TG_USER_ID && env.DEPLOY_TG_BOT_TOKEN
+        run: |
+          curl \
+            -s -o /dev/null \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"text": "${{github.workflow}} 完成！","chat_id": "${{ env.DEPLOY_TG_USER_ID }}"}' \
+            https://api.telegram.org/bot${{ env.DEPLOY_TG_BOT_TOKEN }}/sendMessage
+      
+      - name: Notify To Server酱
+        if: env.DEPLOY_PUSH_KEY
+        run: |
+          curl -s -o /dev/null -X POST https://sc.ftqq.com/${{ env.DEPLOY_PUSH_KEY }}.send \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          --data 'text=${{ github.workflow }} 完成！&desp=${{ github.workflow }} 完成！'
