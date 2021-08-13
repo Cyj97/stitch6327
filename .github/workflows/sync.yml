@@ -19,5 +19,5 @@ jobs:
         with:
           source_repo: "https://github.com/zero205/JD_tencent_scf.git"
           source_branch: "scf"
-          destination_branch: "main"
+          destination_branch: "scf"
           github_token: ${{ secrets.PAT }}
